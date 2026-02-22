@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Gamepad2, Trophy, Target, Zap, Star, Gift, CheckCircle, Users, Clock, Award, TrendingUp, Crown, RotateCcw, ArrowLeft, Flame, Brain, Timer, Puzzle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '../store/appStore';
-import { collection, getDocs, doc, addDoc, query, orderBy, limit, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -190,34 +190,58 @@ const Games: React.FC = () => {
   }, [user]);
 
   // ─── Firestore: Load top players ───────────────────────────────────────────
+  // Live users leaderboard so game rewards reflect immediately
   useEffect(() => {
-    const fetchTopPlayers = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, 'users'));
-        const players = snapshot.docs.map(d => {
-          const data = d.data();
-          const netWorth = (data.balance || 100000) +
-            (data.portfolio?.reduce((s: number, i: any) => s + (i.totalValue || 0), 0) ?? 0);
-          return {
-            rank: 0,
-            username: data.username || data.email || 'Anonymous',
-            score: netWorth - 100000,
-            avatar: generateAvatar(data.username || 'A'),
-          };
-        }).sort((a, b) => b.score - a.score).slice(0, 5).map((p, i) => ({ ...p, rank: i + 1 }));
+    const unsub = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const players = snapshot.docs
+          .map((d) => {
+            const data = d.data() as any;
+            const balance = typeof data.balance === 'number' ? data.balance : 100000;
+            const portfolio = Array.isArray(data.portfolio) ? data.portfolio : [];
+            const portfolioValue = portfolio.reduce((sum: number, item: any) => {
+              const shares = Number(item?.shares) || 0;
+              const livePrice = drivers.find(driver => driver.id === item?.driverId)?.price;
+              const itemPrice =
+                typeof livePrice === 'number'
+                  ? livePrice
+                  : typeof item?.currentPrice === 'number'
+                    ? item.currentPrice
+                    : shares > 0 && typeof item?.totalValue === 'number'
+                      ? item.totalValue / shares
+                      : 0;
+
+              return sum + (itemPrice * shares);
+            }, 0);
+
+            const netWorth = balance + portfolioValue;
+            return {
+              rank: 0,
+              username: data.username || data.email || 'Anonymous',
+              score: netWorth - 100000,
+              avatar: generateAvatar(data.username || 'A'),
+            };
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 5)
+          .map((p, i) => ({ ...p, rank: i + 1 }));
+
         setTopPlayers(players);
-      } catch {
+      },
+      () => {
         setTopPlayers([
-          { rank: 1, username: 'RaceMaster',      score: 58000, avatar: '🏎️' },
-          { rank: 2, username: 'SpeedDemon',       score: 42000, avatar: '⚡' },
-          { rank: 3, username: 'PitStopPro',       score: 35000, avatar: '🔧' },
-          { rank: 4, username: 'VeteranInvestor',  score: 21000, avatar: '👑' },
-          { rank: 5, username: 'RookieRacer',      score: -5000, avatar: '🆕' },
+          { rank: 1, username: 'RaceMaster',      score: 58000, avatar: 'R' },
+          { rank: 2, username: 'SpeedDemon',      score: 42000, avatar: 'S' },
+          { rank: 3, username: 'PitStopPro',      score: 35000, avatar: 'P' },
+          { rank: 4, username: 'VeteranInvestor', score: 21000, avatar: 'V' },
+          { rank: 5, username: 'RookieRacer',     score: -5000, avatar: 'N' },
         ]);
       }
-    };
-    fetchTopPlayers();
-  }, []);
+    );
+
+    return () => unsub();
+  }, [drivers]);
 
   // ─── Firestore: Real-time game history ─────────────────────────────────────
   useEffect(() => {

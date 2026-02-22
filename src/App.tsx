@@ -40,6 +40,27 @@ const App: React.FC = () => {
       
       setDrivers(drivers);
       setRaces(schedule);
+
+      // TEMP: Force one live race for telemetry UI testing.
+      await setDoc(doc(db, 'race_schedule', 'test_gp'), {
+        id: 'test_gp',
+        round: 0,
+        raceName: 'Test GP',
+        circuit: {
+          circuitId: 'test_track',
+          circuitName: 'Telemetry Test Circuit',
+          location: 'Simulation',
+          country: 'Test',
+          length: 5.0,
+        },
+        date: new Date().toISOString(),
+        scheduledTime: Date.now(),
+        status: 'live',
+        laps: 57,
+        results: [],
+        winner: '',
+        lastUpdated: Date.now(),
+      }, { merge: true });
       
       // Check auth state
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -156,6 +177,10 @@ const App: React.FC = () => {
         <Route
           path="/live"
           element={user ? <LiveRace /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/live-test"
+          element={user ? <LiveRace forceTestLive /> : <Navigate to="/login" />}
         />
         <Route
           path="/schedule"

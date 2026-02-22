@@ -1041,6 +1041,10 @@ export const fetchDrivers = async (): Promise<Driver[]> => {
     const driversRef = collection(db, 'drivers');
     const driversSnapshot = await getDocs(driversRef);
 
+    if (driversSnapshot.empty) {
+      return INITIAL_DRIVERS;
+    }
+
     const fallbackById = new Map(INITIAL_DRIVERS.map(driver => [driver.id, driver]));
 
     return driversSnapshot.docs.map(doc => {

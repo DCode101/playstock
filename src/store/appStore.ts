@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { doc, increment, updateDoc } from 'firebase/firestore';
 import { Driver, User, MarketState, Race } from '../types';
+import { db } from '../services/firebase';
 
 // Define the RaceState interface for Firebase sync
 interface RaceState {
@@ -107,9 +109,34 @@ export const useAppStore = create<AppState>()(
       setUser: (user) => set({ user }),
 
       updateBalance: (amount) =>
-        set((state) => ({
-          user: state.user ? { ...state.user, balance: state.user.balance + amount } : null,
-        })),
+        set((state) => {
+          if (!state.user) {
+            return { user: null };
+          }
+
+          const baseCapital = 100000;
+          const currentTotalReturn = state.user.totalReturn ?? (state.user.balance - baseCapital);
+          const nextTotalReturn = currentTotalReturn + amount;
+          const updatedUser = {
+            ...state.user,
+            balance: state.user.balance + amount,
+            netWorth: (state.user.netWorth ?? state.user.balance) + amount,
+            totalReturn: nextTotalReturn,
+            totalReturnPercent: (nextTotalReturn / baseCapital) * 100,
+          };
+
+          updateDoc(doc(db, 'users', state.user.uid), {
+            balance: increment(amount),
+            netWorth: increment(amount),
+            totalReturn: increment(amount),
+            totalReturnPercent: updatedUser.totalReturnPercent,
+            lastUpdated: Date.now(),
+          }).catch((error) => {
+            console.error('Error updating balance:', error);
+          });
+
+          return { user: updatedUser };
+        }),
 
       setDrivers: (drivers) => set({ drivers }),
 

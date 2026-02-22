@@ -804,7 +804,7 @@ const Schedule: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => window.location.href = '/live'}
+                onClick={() => window.location.href = liveRace.id === 'test_gp' ? '/live-test' : '/live'}
                 className="bg-white text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-gray-100 transition"
               >
                 Watch Live →

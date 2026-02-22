@@ -5,6 +5,7 @@ import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, A
 import { useAppStore } from '../store/appStore';
 import { doc, updateDoc, getDoc, setDoc, onSnapshot, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { INITIAL_DRIVERS } from '../services/dataService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const POINTS_SYSTEM = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -49,7 +50,11 @@ function secsToHMS(secs: number): string {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-const LiveRace: React.FC = () => {
+interface LiveRaceProps {
+  forceTestLive?: boolean;
+}
+
+const LiveRace: React.FC<LiveRaceProps> = ({ forceTestLive = false }) => {
   const { drivers, updateDriverPrice, user, setUser, raceState, setRaceState } = useAppStore();
 
   // UI state
@@ -71,6 +76,7 @@ const LiveRace: React.FC = () => {
 
   // raceStatus drives which screen renders
   const [raceStatus, setRaceStatus] = useState<'before' | 'live' | 'finished' | 'after'>(() => {
+    if (forceTestLive) return 'live';
     const now = Date.now();
     if (now > SEASON_END)    return 'after';
     if (isRaceWindow(now))   return 'live';
@@ -84,6 +90,7 @@ const LiveRace: React.FC = () => {
   const raceFinalizedRef = useRef(false);
   const raceEndMsRef     = useRef(0);   // when race was finalized
   const nextRaceMsRef    = useRef(getNextRaceStartMs()); // always has a valid fallback
+  const localLapRef      = useRef(0);
 
   useEffect(() => { driversRef.current = drivers; }, [drivers]);
 
@@ -105,7 +112,7 @@ const LiveRace: React.FC = () => {
     } catch {
       nextRaceMsRef.current = getNextRaceStartMs();
     }
-  }, []);
+  }, [forceTestLive]);
 
   // ─── Init race doc ────────────────────────────────────────────────────────
   const initRaceDoc = async () => {
@@ -123,7 +130,7 @@ const LiveRace: React.FC = () => {
   // ─── Start race ───────────────────────────────────────────────────────────
   const startRace = async () => {
     if (raceStartedRef.current) return;
-    const currentDrivers = driversRef.current;
+    const currentDrivers = driversRef.current.length > 0 ? driversRef.current : INITIAL_DRIVERS;
     if (!currentDrivers.length) {
       console.warn('⚠️ startRace: drivers not loaded yet');
       return;
@@ -148,6 +155,16 @@ const LiveRace: React.FC = () => {
         tyreTemp: 95 + Math.random() * 10, engineTemp: 105 + Math.random() * 10,
         acceleration: 4.5 + Math.random() * 1.5,
       }));
+
+    setRaceState({
+      isOngoing: true,
+      currentLap: 1,
+      positions: grid,
+      results: [],
+      lastUpdated: Date.now(),
+    });
+    setPositions(grid);
+    setSelectedDriver(grid[0] || null);
 
     await updateDoc(doc(db, 'race', RACE_DOC_ID), {
       isOngoing: true, raceFinished: false, currentLap: 1,
@@ -268,7 +285,9 @@ const LiveRace: React.FC = () => {
       }
 
       // ── Authoritative status logic ──
-      if (nowMs > SEASON_END) {
+      if (forceTestLive) {
+        setRaceStatus('live');
+      } else if (nowMs > SEASON_END) {
         setRaceStatus('after');
       } else if (data.isOngoing) {
         setRaceStatus('live');
@@ -291,6 +310,48 @@ const LiveRace: React.FC = () => {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    if (!selectedDriver && raceState.positions.length > 0) {
+      setSelectedDriver(raceState.positions[0]);
+    }
+  }, [raceState.positions, selectedDriver]);
+
+  useEffect(() => {
+    if (!forceTestLive || raceStatus !== 'live' || positions.length > 0) return;
+
+    const source = driversRef.current.length > 0 ? driversRef.current : INITIAL_DRIVERS;
+    if (!source.length) return;
+
+    const grid = [...source]
+      .sort((a, b) => (a.rank || 99) - (b.rank || 99))
+      .slice(0, 20)
+      .map((d, i) => ({
+        id: d.id, name: d.name, team: d.team, teamColor: d.teamColor,
+        photo: d.photo, price: d.price, rank: d.rank, points: d.points || 0,
+        position: i + 1,
+        gap: i === 0 ? 'Leader' : `+${(i * 2.3).toFixed(3)}s`,
+        pitstops: 0,
+        speed: 320 + Math.random() * 20, rpm: 11000 + Math.random() * 2000,
+        throttle: 85 + Math.random() * 15, brake: Math.random() * 100,
+        gear: Math.floor(Math.random() * 8) + 1,
+        tyreWear: 100, fuel: 100,
+        tyreTemp: 95 + Math.random() * 10, engineTemp: 105 + Math.random() * 10,
+        acceleration: 4.5 + Math.random() * 1.5,
+      }));
+
+    localLapRef.current = 1;
+    setRaceState({
+      isOngoing: true,
+      currentLap: 1,
+      positions: grid,
+      results: [],
+      lastUpdated: Date.now(),
+    });
+    setPositions(grid);
+    setSelectedDriver(grid[0] || null);
+    setRaceUpdates(['TEST MODE: Local simulation started']);
+  }, [forceTestLive, raceStatus, positions.length, setRaceState]);
+
   // ─── Master controller ────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
@@ -304,15 +365,29 @@ const LiveRace: React.FC = () => {
         scheduleLive = s.docs.some(d => (d.data() as any).status === 'live');
       } catch {}
 
-      const shouldBeLive = isRaceWindow(nowMs) || scheduleLive;
+      const shouldBeLive = forceTestLive || isRaceWindow(nowMs) || scheduleLive;
 
       const ref  = doc(db, 'race', RACE_DOC_ID);
       const snap = await getDoc(ref);
       if (!snap.exists()) return;
       const st = snap.data();
 
-      // Clear stale raceFinished from previous day or after 30-min post-race window
+      // If an admin/manual schedule marks a race as live, allow immediate restart for testing.
       if (st.raceFinished) {
+        if (scheduleLive) {
+          raceStartedRef.current = false;
+          raceFinalizedRef.current = false;
+          await updateDoc(ref, {
+            raceFinished: false,
+            isOngoing: false,
+            currentLap: 0,
+            positions: [],
+            results: [],
+            lastUpdated: nowMs,
+          }).catch(() => {});
+        }
+
+        // Clear stale raceFinished from previous day or after 30-min post-race window
         const lastDay  = getISTMidnight(st.lastUpdated ?? 0);
         const todayDay = getISTMidnight(nowMs);
         if (todayDay > lastDay || nowMs >= dayEnd + POST_RACE_MS) {
@@ -320,7 +395,15 @@ const LiveRace: React.FC = () => {
           raceFinalizedRef.current = false;
           await updateDoc(ref, { raceFinished: false, isOngoing: false, lastUpdated: nowMs }).catch(() => {});
         }
-        return; // Don't start a new race while raceFinished is still true
+        if (!scheduleLive) {
+          return; // Keep normal cooldown behavior when not explicitly forced live.
+        }
+      }
+
+      const hasGrid = Array.isArray(st.positions) && st.positions.length > 0;
+      if (shouldBeLive && st.isOngoing && !hasGrid) {
+        raceStartedRef.current = false;
+        await updateDoc(ref, { isOngoing: false, currentLap: 0, positions: [], lastUpdated: nowMs }).catch(() => {});
       }
 
       if      (shouldBeLive  && !st.isOngoing && !st.raceFinished) await startRace();
@@ -340,6 +423,69 @@ const LiveRace: React.FC = () => {
   // ─── Lap simulation ───────────────────────────────────────────────────────
   useEffect(() => {
     if (raceStatus !== 'live' || !positions.length) return;
+
+    if (forceTestLive) {
+      const interval = setInterval(() => {
+        setPositions(prev => {
+          if (!prev.length) return prev;
+
+          let newPos = [...prev];
+          const swaps = Math.floor(Math.random() * 3);
+          for (let k = 0; k < swaps; k++) {
+            if (newPos.length < 2) break;
+            const a = Math.floor(Math.random() * (newPos.length - 1));
+            const b = a + 1;
+            const tmp = { ...newPos[a] }; newPos[a] = { ...newPos[b] }; newPos[b] = tmp;
+          }
+
+          let nextLap = localLapRef.current + 1;
+          if (nextLap > TOTAL_LAPS) nextLap = 1;
+          localLapRef.current = nextLap;
+
+          newPos = newPos.map((d: any, i: number) => {
+            const p = i + 1;
+            const bon = Math.max(0, (20 - p) * 0.5);
+            const speed = Math.round(300 + Math.random() * 50 + bon);
+            const throttle = Math.round(70 + Math.random() * 30);
+            const brake = Math.round(Math.random() * 80);
+            const rpm = Math.round(10000 + Math.random() * 3000);
+            const gear = Math.min(8, Math.max(1, Math.round(speed / 50)));
+            const tyreWear = Math.max(0, (d.tyreWear || 100) - (0.5 + Math.random()));
+            const fuel = Math.max(0, (d.fuel || 100) - (1.2 + Math.random() * 0.3));
+            const tyreTemp = +(95 + Math.random() * 15 - p * 0.2).toFixed(1);
+            const engineTemp = +(105 + Math.random() * 15 - p * 0.1).toFixed(1);
+            const acceleration = +(Math.max(2, 6 - p * 0.05 + Math.random() * 2)).toFixed(2);
+
+            const hist = telemetryRef.current[d.id] || [];
+            hist.push({
+              lap: nextLap, speed, throttle, brake, gear, rpm,
+              tyreTemp, engineTemp, fuel, acceleration,
+            });
+            if (hist.length > MAX_TELEMETRY_HISTORY) hist.shift();
+            telemetryRef.current[d.id] = hist;
+
+            return {
+              ...d,
+              position: p,
+              gap: p === 1 ? 'Leader' : `+${((p - 1) * 1.5 + Math.random() * 0.5).toFixed(3)}s`,
+              speed, throttle, brake, rpm, gear, tyreWear, fuel, tyreTemp, engineTemp, acceleration,
+            };
+          });
+
+          setRaceState({
+            isOngoing: true,
+            currentLap: nextLap,
+            positions: newPos,
+            lastUpdated: Date.now(),
+          });
+          setSelectedDriver((prev: any) => prev ? (newPos.find((p: any) => p.id === prev.id) || newPos[0]) : newPos[0]);
+
+          return newPos;
+        });
+      }, 2000);
+
+      return () => clearInterval(interval);
+    }
 
     const simulateLap = async () => {
       const ref  = doc(db, 'race', RACE_DOC_ID);
