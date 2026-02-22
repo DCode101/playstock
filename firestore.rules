@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read and write their own data
+      allow read, write: if isOwner(userId);
+      
+      // Public profile data (for leaderboard)
+      allow read: if isAuthenticated();
+    }
+    
+    // Drivers collection
+    match /drivers/{driverId} {
+      // Everyone can read driver data
+      allow read: if true;
+      
+      // Only server/admin can write
+      allow write: if false;
+    }
+    
+    // Market state
+    match /market/{document} {
+      // Everyone can read market data
+      allow read: if true;
+      
+      // Only server can update market state
+      allow write: if false;
+    }
+    
+    // Trades collection
+    match /trades/{tradeId} {
+      // Everyone can read trades (for market activity)
+      allow read: if true;
+      
+      // Only authenticated users can create trades
+      allow create: if isAuthenticated() &&
+                      request.resource.data.userId == request.auth.uid;
+      
+      // No updates or deletes
+      allow update, delete: if false;
+    }
+    
+    // Leaderboard collection
+    match /leaderboard/{userId} {
+      // Everyone can read leaderboard
+      allow read: if true;
+      
+      // Users can update their own entry
+      allow write: if isOwner(userId);
+    }
+    
+    // Race schedule
+    match /schedule/{raceId} {
+      // Everyone can read schedule
+      allow read: if true;
+      
+      // Only server can update
+      allow write: if false;
+    }
+    
+    // News/announcements
+    match /news/{newsId} {
+      // Everyone can read news
+      allow read: if true;
+      
+      // Only admin can write
+      allow write: if false;
+    }
+    
+    // Achievements
+    match /achievements/{userId} {
+      // Users can read their achievements
+      allow read: if isOwner(userId);
+      
+      // Only server can award achievements
+      allow write: if false;
+    }
+    
+    // Referrals
+    match /referrals/{referralCode} {
+      // Everyone can read (to verify codes)
+      allow read: if isAuthenticated();
+      
+      // Users can create/update their own referral
+      allow write: if isAuthenticated() &&
+                     request.resource.data.userId == request.auth.uid;
+    }
+  }
+}
