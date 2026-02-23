@@ -120,7 +120,9 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'race_schedule'), (snap) => {
       const now = Date.now();
-      const races = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const races = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter((r: any) => r.id !== 'test_gp' && !String(r.raceName || '').toLowerCase().includes('test'));
       const liveRace = races.find(r => r.status === 'live');
       if (liveRace) {
         setNextRace({ date: new Date(liveRace.scheduledTime), name: liveRace.raceName, isLive: true });
@@ -323,7 +325,7 @@ const Dashboard: React.FC = () => {
                   <span className="text-white font-bold">
                     {nextRace.isLive
                       ? `${nextRace.name} is LIVE now`
-                      : `${nextRace.name}: ${nextRace.date.toLocaleDateString()} ${nextRace.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                      : `${nextRace.name}: ${nextRace.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })} ${nextRace.date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })} IST`}
                   </span>
                 </div>
               </div>
