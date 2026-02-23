@@ -110,6 +110,7 @@ const generateAvatar = (name: string) => {
 // ─── Component ────────────────────────────────────────────────────────────────
 const Games: React.FC = () => {
   const { user, drivers, updateBalance } = useAppStore();
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
   const [topPlayers, setTopPlayers] = useState<LeaderboardUser[]>([]);
@@ -171,6 +172,33 @@ const Games: React.FC = () => {
     lastDelta: 0,
     reward: 0,
   });
+  const [pitWindowOpen, setPitWindowOpen] = useState(false);
+
+  const getAudioContext = () => {
+    if (!audioCtxRef.current) {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return null;
+      audioCtxRef.current = new Ctx();
+    }
+    return audioCtxRef.current;
+  };
+
+  const playTone = (frequency: number, durationMs: number, type: OscillatorType = 'sine', volume = 0.05) => {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = frequency;
+    gain.gain.value = volume;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    const now = ctx.currentTime;
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
+    osc.start(now);
+    osc.stop(now + durationMs / 1000);
+  };
 
   // ─── Firestore: Save game score ────────────────────────────────────────────
   const saveGameScore = useCallback(async (gameName: string, score: number, reward: number) => {
@@ -311,6 +339,7 @@ const Games: React.FC = () => {
           setReaction(prev => {
             const lights = [...prev.lights] as [boolean,boolean,boolean,boolean,boolean];
             lights[i] = true;
+            playTone(820 + i * 30, 110, 'square', 0.03);
             return { ...prev, lights, stage: 'ready' };
           });
         }, i * 500);
@@ -318,11 +347,24 @@ const Games: React.FC = () => {
       });
       // all on → wait random → go
       const tGo = setTimeout(() => {
+        playTone(1400, 180, 'sawtooth', 0.05);
         setReaction(prev => ({ ...prev, lights: [false,false,false,false,false], stage: 'go', startTime: Date.now() }));
       }, 2500 + Math.random() * 1000);
       reactionTimerRef.current.push(tGo);
     }, delay);
     reactionTimerRef.current.push(t0);
+  };
+
+  const handleAccelerator = () => {
+    if (reaction.stage === 'idle' || reaction.stage === 'result') {
+      startReaction();
+      return;
+    }
+    if (reaction.stage === 'done') {
+      goBack();
+      return;
+    }
+    handleReactionClick();
   };
 
   const handleReactionClick = () => {
@@ -341,6 +383,7 @@ const Games: React.FC = () => {
       }
     } else if (reaction.stage === 'waiting' || reaction.stage === 'ready') {
       // False start
+      playTone(220, 260, 'square', 0.05);
       reactionTimerRef.current.forEach(clearTimeout);
       setReaction(prev => ({ ...prev, stage: 'result', reactionTime: -1, falsestarts: prev.falsestarts + 1 }));
     }
@@ -408,6 +451,16 @@ const Games: React.FC = () => {
   // ─── STRATEGY ─────────────────────────────────────────────────────────────
   const makeStrategyDecision = (decision: string) => {
     if (strategy.done) return;
+    playTone(500, 70, 'square', 0.03);
+    if (decision === 'pit' && !pitWindowOpen) {
+      playTone(180, 120, 'square', 0.04);
+      setStrategy(prev => ({
+        ...prev,
+        lastMessage: '⚠️ Pit lane closed. Wait for the pit window (Lap 45-53).',
+        lastDelta: 0,
+      }));
+      return;
+    }
 
     let { position, tyreWear, fuel, drsAvailable, score } = strategy;
     let msg = '';
@@ -427,6 +480,7 @@ const Games: React.FC = () => {
         tyreWear = 100; fuel = Math.min(100, fuel + 30);
         msg = '🛑 Pit stop: 2.8s. Fresh mediums fitted. Lost 2 positions.';
         delta = -20;
+        playTone(260, 220, 'sawtooth', 0.05);
         break;
       case 'defend':
         if (Math.random() > 0.35) { msg = '🛡️ Solid defense! Position held.'; delta = 80; }
@@ -443,6 +497,10 @@ const Games: React.FC = () => {
     const done = newLap >= 57;
     const newScore = score + delta;
     const drsNext = Math.random() > 0.5;
+    const pitWindowNext = newLap >= 45 && newLap <= 53;
+    setPitWindowOpen(pitWindowNext);
+    if (delta > 0) playTone(980, 90, 'triangle', 0.03);
+    if (delta < 0) playTone(180, 120, 'square', 0.04);
 
     if (done) {
       const posBonus = (20 - position) * 60;
@@ -720,16 +778,15 @@ const Games: React.FC = () => {
                   </div>
                 )}
 
-                <div className="text-center">
+                <div className="text-center min-h-[200px] flex flex-col items-center justify-center">
                   {reaction.stage === 'idle' && (
                     <div>
                       <p className="text-white mb-2">React when lights go OUT — 3 attempts, best score wins.</p>
                       {reaction.falsestarts > 0 && <p className="text-red-400 text-sm mb-2">⚠️ {reaction.falsestarts} false start(s)</p>}
-                      <button onClick={startReaction} className="btn-primary text-lg px-10 py-4">Start Test</button>
                     </div>
                   )}
                   {(reaction.stage === 'waiting' || reaction.stage === 'ready') && (
-                    <div onClick={handleReactionClick} className="cursor-pointer select-none">
+                    <div className="select-none">
                       <p className="text-yellow-400 text-2xl font-black animate-pulse mb-4">
                         {reaction.stage === 'waiting' ? 'Get ready...' : 'Lights coming on...'}
                       </p>
@@ -739,9 +796,6 @@ const Games: React.FC = () => {
                   {reaction.stage === 'go' && (
                     <div>
                       <p className="text-green-400 text-3xl font-black mb-4 animate-pulse">🚦 LIGHTS OUT — GO!</p>
-                      <button onClick={handleReactionClick} className="btn-primary text-2xl px-16 py-6 bg-green-500 hover:bg-green-600">
-                        ⚡ CLICK NOW ⚡
-                      </button>
                     </div>
                   )}
                   {reaction.stage === 'result' && (
@@ -758,9 +812,7 @@ const Games: React.FC = () => {
                           </p>
                         </>
                       )}
-                      <button onClick={startReaction} className="btn-primary">
-                        Next Attempt ({3 - reaction.attempts.length} left)
-                      </button>
+                      <p className="text-gray-400 text-sm">Next Attempt ({3 - reaction.attempts.length} left)</p>
                     </div>
                   )}
                   {reaction.stage === 'done' && (
@@ -775,6 +827,20 @@ const Games: React.FC = () => {
                       <button onClick={goBack} className="btn-primary">Back to Games</button>
                     </div>
                   )}
+                </div>
+                <div className="mt-6 flex justify-center">
+                  <button
+                    onClick={handleAccelerator}
+                    className={`px-12 py-4 rounded-xl font-black uppercase tracking-wider text-white transition ${
+                      reaction.stage === 'go'
+                        ? 'bg-green-500 hover:bg-green-600 shadow-lg shadow-green-500/30'
+                        : reaction.stage === 'waiting' || reaction.stage === 'ready'
+                          ? 'bg-yellow-500 hover:bg-yellow-600 shadow-lg shadow-yellow-500/30'
+                          : 'bg-racing-red hover:bg-red-700'
+                    }`}
+                  >
+                    Accelerator
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -973,6 +1039,31 @@ const Games: React.FC = () => {
                           style={{ width: `${strategy.tyreWear}%` }} />
                       </div>
                     </div>
+                    <div className="mt-4">
+                      <div className="flex justify-between text-xs text-gray-500 mb-1"><span>Lap Progress</span><span>{strategy.lap}/57</span></div>
+                      <div className="w-full h-2 bg-dark-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-racing-red transition-all duration-500" style={{ width: `${(strategy.lap / 57) * 100}%` }} />
+                      </div>
+                    </div>
+                    <div className={`mt-4 p-2 rounded-lg text-xs font-semibold border ${pitWindowOpen ? 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40' : 'bg-dark-900 text-gray-500 border-dark-700'}`}>
+                      Pit Window: {pitWindowOpen ? 'OPEN (Lap 45-53)' : 'Closed'}
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-xs text-gray-500 mb-2">Track Position</p>
+                      <div className="grid grid-cols-10 gap-1">
+                        {Array.from({ length: 20 }).map((_, idx) => {
+                          const pos = idx + 1;
+                          const isCar = pos === strategy.position;
+                          return (
+                            <div
+                              key={pos}
+                              className={`h-3 rounded ${isCar ? 'bg-racing-red shadow-sm shadow-racing-red/60' : 'bg-dark-700'}`}
+                              title={`P${pos}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Actions */}
@@ -989,7 +1080,7 @@ const Games: React.FC = () => {
                         <button
                           key={action.key}
                           onClick={() => makeStrategyDecision(action.key)}
-                          disabled={strategy.done}
+                          disabled={strategy.done || (action.key === 'pit' && !pitWindowOpen)}
                           className={`w-full p-3 rounded-lg text-white text-sm font-bold transition-colors ${action.color} disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between`}
                         >
                           <span>{action.label}</span>

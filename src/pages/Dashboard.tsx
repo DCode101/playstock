@@ -22,6 +22,8 @@ const Dashboard: React.FC = () => {
   const [dailyProfit, setDailyProfit] = useState(0);
   const [nextRace, setNextRace] = useState<any>(null);
   const [selectedRange, setSelectedRange] = useState<'1D' | '30D' | '1Y'>('30D');
+  const [showTutorialModal, setShowTutorialModal] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
 
   useEffect(() => {
     // Calculate portfolio value and returns
@@ -70,6 +72,13 @@ const Dashboard: React.FC = () => {
     generatePerformanceHistory();
     
   }, [user, drivers]);
+
+  useEffect(() => {
+    if (user && !user.hasCompletedTutorial) {
+      setShowTutorialModal(true);
+      setTutorialStep(0);
+    }
+  }, [user]);
 
   const generatePerformanceHistory = () => {
     if (!user?.netWorthHistory || user.netWorthHistory.length === 0) {
@@ -299,6 +308,28 @@ const Dashboard: React.FC = () => {
     }).format(value);
   };
 
+  const finishTutorial = async () => {
+    if (!user) return;
+    const updatedUser = {
+      ...user,
+      hasCompletedTutorial: true,
+      balance: 100000,
+      netWorth: Math.max(100000, user.netWorth || 100000),
+    };
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        hasCompletedTutorial: true,
+        balance: 100000,
+        netWorth: Math.max(100000, user.netWorth || 100000),
+        lastUpdated: Date.now(),
+      });
+      setUser(updatedUser);
+    } catch (error) {
+      console.error('Error completing tutorial:', error);
+    }
+    setShowTutorialModal(false);
+  };
+
   return (
     <div className="min-h-screen bg-dark-950 p-4 md:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
@@ -523,6 +554,52 @@ const Dashboard: React.FC = () => {
             <p className="text-white/80 text-sm">See your ranking</p>
           </Link>
         </motion.div>
+
+        <AnimatePresence>
+          {showTutorialModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="card max-w-xl w-full"
+              >
+                <h2 className="text-2xl font-black text-white mb-2">Welcome to PlayStock</h2>
+                <p className="text-gray-400 mb-6">Quick onboarding before your first race.</p>
+
+                <div className="space-y-3 mb-6">
+                  {[
+                    'Buy drivers in Market and build your portfolio.',
+                    'Track live prices and race impact in Schedule and Live Race.',
+                    'Play mini games to earn bonus tokens and climb leaderboard.',
+                  ].map((step, idx) => (
+                    <div key={idx} className={`p-3 rounded-lg border ${tutorialStep >= idx ? 'border-racing-red/50 bg-racing-red/10 text-white' : 'border-dark-700 text-gray-500'}`}>
+                      <span className="font-bold mr-2">Step {idx + 1}</span>
+                      {step}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-3">
+                  {tutorialStep < 2 ? (
+                    <button onClick={() => setTutorialStep((s) => Math.min(2, s + 1))} className="btn-primary w-full">
+                      Next
+                    </button>
+                  ) : (
+                    <button onClick={finishTutorial} className="btn-primary w-full">
+                      Start with 100,000 Tokens
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Trade Modal */}
         <AnimatePresence>
