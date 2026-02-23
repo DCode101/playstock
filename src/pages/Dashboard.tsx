@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/appStore';
 import { TrendingUp, TrendingDown, DollarSign, Briefcase, Trophy, Zap, ArrowUpRight, ArrowDownRight, ShoppingCart, X, Calendar, Clock } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { doc, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 const Dashboard: React.FC = () => {
@@ -21,6 +21,7 @@ const Dashboard: React.FC = () => {
   const [performanceHistory, setPerformanceHistory] = useState<any[]>([]);
   const [dailyProfit, setDailyProfit] = useState(0);
   const [nextRace, setNextRace] = useState<any>(null);
+  const [selectedRange, setSelectedRange] = useState<'1D' | '30D' | '1Y'>('30D');
 
   useEffect(() => {
     // Calculate portfolio value and returns
@@ -68,14 +69,12 @@ const Dashboard: React.FC = () => {
     // Generate performance history based on actual data
     generatePerformanceHistory();
     
-    // Find next race
-    findNextRace();
   }, [user, drivers]);
 
   const generatePerformanceHistory = () => {
     if (!user?.netWorthHistory || user.netWorthHistory.length === 0) {
       // Generate realistic performance data based on portfolio
-      const days = 30;
+      const days = 365;
       const data = [];
       let baseValue = user?.balance || 100000;
       
@@ -118,30 +117,33 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const findNextRace = () => {
-    const now = new Date();
-    const startDate = new Date('2026-02-18T20:00:00+05:30');
-    const endDate = new Date('2026-02-28T20:00:00+05:30');
-    
-    if (now < startDate) {
-      setNextRace({ date: startDate, name: 'Season Opener' });
-    } else if (now > endDate) {
-      setNextRace(null);
-    } else {
-      // Find today's race
-      const today = new Date();
-      today.setHours(20, 0, 0, 0);
-      
-      if (now < today) {
-        setNextRace({ date: today, name: "Today's Race" });
-      } else {
-        // Next race is tomorrow
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        setNextRace({ date: tomorrow, name: 'Next Race' });
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'race_schedule'), (snap) => {
+      const now = Date.now();
+      const races = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const liveRace = races.find(r => r.status === 'live');
+      if (liveRace) {
+        setNextRace({ date: new Date(liveRace.scheduledTime), name: liveRace.raceName, isLive: true });
+        return;
       }
-    }
-  };
+      const upcoming = races
+        .filter(r => r.status === 'upcoming' && typeof r.scheduledTime === 'number' && r.scheduledTime >= now)
+        .sort((a, b) => a.scheduledTime - b.scheduledTime);
+      if (upcoming.length > 0) {
+        setNextRace({ date: new Date(upcoming[0].scheduledTime), name: upcoming[0].raceName, isLive: false });
+      } else {
+        setNextRace(null);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const filteredPerformanceHistory = useMemo(() => {
+    if (performanceHistory.length === 0) return [];
+    if (selectedRange === '1D') return performanceHistory.slice(-1);
+    if (selectedRange === '30D') return performanceHistory.slice(-30);
+    return performanceHistory.slice(-365);
+  }, [performanceHistory, selectedRange]);
 
   const stats = [
     {
@@ -319,7 +321,9 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-racing-red" />
                   <span className="text-white font-bold">
-                    {nextRace.date.toLocaleDateString()} at 8:00 PM
+                    {nextRace.isLive
+                      ? `${nextRace.name} is LIVE now`
+                      : `${nextRace.name}: ${nextRace.date.toLocaleDateString()} ${nextRace.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                   </span>
                 </div>
               </div>
@@ -371,13 +375,19 @@ const Dashboard: React.FC = () => {
                 <p className="text-dark-400 text-sm">Based on your actual investments</p>
               </div>
               <div className="flex gap-2">
-                <button className="px-3 py-1 text-xs bg-primary-600 text-white rounded-lg">30D</button>
-                <button className="px-3 py-1 text-xs bg-dark-800 text-dark-400 rounded-lg hover:bg-dark-700">90D</button>
-                <button className="px-3 py-1 text-xs bg-dark-800 text-dark-400 rounded-lg hover:bg-dark-700">1Y</button>
+                {(['1D', '30D', '1Y'] as const).map((range) => (
+                  <button
+                    key={range}
+                    onClick={() => setSelectedRange(range)}
+                    className={`px-3 py-1 text-xs rounded-lg ${selectedRange === range ? 'bg-primary-600 text-white' : 'bg-dark-800 text-dark-400 hover:bg-dark-700'}`}
+                  >
+                    {range}
+                  </button>
+                ))}
               </div>
             </div>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={performanceHistory}>
+              <AreaChart data={filteredPerformanceHistory}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
@@ -385,7 +395,7 @@ const Dashboard: React.FC = () => {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="day" stroke="#4b5563" label={{ value: 'Days', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }} />
+                <XAxis dataKey="day" stroke="#4b5563" label={{ value: selectedRange, position: 'insideBottom', offset: -5, fill: '#9CA3AF' }} />
                 <YAxis stroke="#4b5563" label={{ value: 'Value ($)', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }} />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #E10600', borderRadius: '8px' }}

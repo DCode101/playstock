@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useAppStore } from '../store/appStore';
 import { doc, updateDoc, collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -16,7 +16,6 @@ const Market: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [lastRaceResults, setLastRaceResults] = useState<any[]>([]);
   const [lastRaceName, setLastRaceName] = useState('');
-  const [driverStats, setDriverStats] = useState<Record<string, { lastChange: number, overallChange: number }>>({});
 
   // Listen to race_schedule for completed race results
   useEffect(() => {
@@ -35,37 +34,18 @@ const Market: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Listen to drivers collection for real-time price updates
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'drivers'), (snap) => {
-      const stats: Record<string, { lastChange: number, overallChange: number }> = {};
-      
-      snap.docs.forEach(doc => {
-        const data = doc.data();
-        const driverId = doc.id;
-        
-        // Get last race change
-        const lastChange = data.changePercent || 0;
-        
-        // Calculate overall change (simplified - just track from first known price)
-        // In production, you'd store price history in a separate collection
-        const overallChange = data.overallChange || 0;
-        
-        stats[driverId] = {
-          lastChange,
-          overallChange
-        };
-      });
-      
-      setDriverStats(stats);
+  const lastRaceChangeMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    lastRaceResults.forEach((r: any) => {
+      map[r.driverId] = typeof r.priceChange === 'number' ? r.priceChange : 0;
     });
-    
-    return () => unsub();
-  }, []);
+    return map;
+  }, [lastRaceResults]);
 
-  const getLastRaceChange = (driverId: string) => {
-    return driverStats[driverId]?.lastChange || 0;
-  };
+  const getLastRaceChange = (driverId: string) =>
+    typeof lastRaceChangeMap[driverId] === 'number'
+      ? lastRaceChangeMap[driverId]
+      : (drivers.find(d => d.id === driverId)?.changePercent || 0);
 
   const getLastRacePosition = (driverId: string) => {
     const r = lastRaceResults.find((r: any) => r.driverId === driverId);
@@ -73,7 +53,9 @@ const Market: React.FC = () => {
   };
 
   const getOverallChange = (driverId: string) => {
-    return driverStats[driverId]?.overallChange || 0;
+    const d = drivers.find(driver => driver.id === driverId);
+    if (!d || !d.basePrice) return 0;
+    return ((d.price - d.basePrice) / d.basePrice) * 100;
   };
 
   const teams = ['all', ...Array.from(new Set(drivers.map(d => d.team)))];
@@ -85,7 +67,7 @@ const Market: React.FC = () => {
     )
     .sort((a, b) => {
       if (sortBy === 'price') return b.price - a.price;
-      if (sortBy === 'change') return (b.changePercent || 0) - (a.changePercent || 0);
+      if (sortBy === 'change') return getLastRaceChange(b.id) - getLastRaceChange(a.id);
       if (sortBy === 'points') return (b.points || 0) - (a.points || 0);
       return a.name.localeCompare(b.name);
     });
@@ -248,9 +230,9 @@ const Market: React.FC = () => {
                         </div>
                         <div className="text-right">
                           <p className="text-3xl font-black text-white neon-text">${currentPrice}</p>
-                          <div className={`flex items-center gap-1 text-sm font-bold ${(driver.changePercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {(driver.changePercent || 0) >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                            {(driver.changePercent || 0) >= 0 ? '+' : ''}{(driver.changePercent || 0).toFixed(2)}%
+                          <div className={`flex items-center gap-1 text-sm font-bold ${lastChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {lastChange >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                            {lastChange >= 0 ? '+' : ''}{lastChange.toFixed(2)}%
                           </div>
                           {overallChange !== 0 && (
                             <div className={`text-xs ${overallChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>

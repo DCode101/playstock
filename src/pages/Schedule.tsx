@@ -512,7 +512,10 @@ const Schedule: React.FC = () => {
             const newPrice = Math.round(driver.price * (1 + result.priceChange / 100));
             await updateDoc(driverRef, {
               price: newPrice,
-              change: result.priceChange
+              change: result.priceChange,
+              changePercent: result.priceChange,
+              lastRacePosition: result.position,
+              lastUpdated: Date.now()
             });
             updateDriverPrice(result.driverId, newPrice, result.priceChange);
           }
@@ -552,7 +555,10 @@ const Schedule: React.FC = () => {
             const newPrice = Math.round(driver.price * (1 + result.priceChange / 100));
             await updateDoc(driverRef, {
               price: newPrice,
-              change: result.priceChange
+              change: result.priceChange,
+              changePercent: result.priceChange,
+              lastRacePosition: result.position,
+              lastUpdated: Date.now()
             });
             updateDriverPrice(result.driverId, newPrice, result.priceChange);
           }
